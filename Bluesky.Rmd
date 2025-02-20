@@ -14,7 +14,7 @@ output:
 ![project workflow](R.png) \# Methods
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(echo = TRUE, output.dir = "docs")
 ```
 
 ```{r, warning=FALSE}
@@ -170,7 +170,7 @@ Question: What words are commonly used in conjuction to an emerging slang word?
 
 ### Topic Modeling
 
-Question: On what context or topic is an emerging slang word used for?
+Question: What context or topic is an emerging slang word used for?
 
 ### Relationship Extraction
 
