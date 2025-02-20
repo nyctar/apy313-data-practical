@@ -7,12 +7,14 @@ output:
     toc: true
     toc_depth: 3
     number_sections: true
+output_file: "index.html"
 ---
 
 # Introduction
 
-![project workflow](R.png) \# Methods
+![project workflow](R.png)
 
+# Methods
 ```{r setup, include=FALSE}
 knitr::opts_knit$set(echo = TRUE, output.dir = "docs")
 ```
