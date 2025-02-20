@@ -1,42 +1,20 @@
 ---
 title: "Tracking Usage of Emerging Gen Z Slang Terms in Bluesky with NLP Techniques"
 author: "Yestin Arvin Gochuico"
-date: "2025-02-19"
-output: html_document
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
 ---
-# Table of Contents
-i. Introduction
-ii. Methods
-  a. Import Data
-    1. Bluesky Dataset
-    2. Urban Dictionary Lexicon
-  a. Data Preprocessing
-    1. Removing Symbols
-    2. Identifying Languge
-    3. Removing Stop Words
-    4. Tokenization
-  b. Text Representation
-    1. Bag-of-Words
-    2. Word Embeddings (Word2Vec)
-    3. TF-IDF
-    4. Latent Dirichlet Allocation
-    5. Pre-trained Embeddings (BERT)
-  c. NLP Techniques
-    1. Term Frequency
-    2. Similarity Search
-    3. Clustering
-    4. Topic Modeling
-    5. Relationship Extraction
-iii. Evaluation
-iv. Results
-
 # Introduction
-
+![project workflow](R.png)
 # Methods
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
-# Import Libraries
+
 ```{r, warning=FALSE}
 library(tidyverse)
 library(reticulate)
@@ -56,7 +34,7 @@ library(ggraph)
 library(quanteda)
 library(rvest)
 ```
-### Import Data
+## Import Data
 ### Bluesky Dataset
 ```{r}
 # Import the Python datasets library
@@ -71,7 +49,6 @@ df <- py_to_r(data$train$to_pandas())
 # Check a few rows
 head(df)
 ```
-### Data as Tibble
 ```{r}
 # Turn the DataFrame into a tibble for tidyverse
 tb <- as_tibble(df)
@@ -79,28 +56,7 @@ tb <- as_tibble(df)
 # View the first few rows
 tail(tb)
 ```
-### Clean Data
-```{r}
-tb <- tb %>%
-  mutate(
-    text = str_replace_all(text, "http[s]?://\\S+", ""),   # Remove URLs
-    text = str_replace_all(text, "@\\w+", ""),             # Remove mentions
-    text = str_replace_all(text, "#\\w+", ""),             # Remove hashtags
-    text = str_replace_all(text, "[^\x01-\x7F]", ""),      # Remove all non-ASCII characters (including emojis)
-    text = str_replace_all(text, "[[:punct:]]", "")        # Remove punctuation
-  )
-
-```
-### Filter English Posts
-```{r}
-# Detect language and add to a column
-tb <- tb %>%
-  mutate(language = cld2::detect_language(text)) %>%
-  filter(language == "en")
-
-head(tb)
-```
-# Urban Dictionary Lexicon
+### Urban Dictionary Lexicon
 ```{r}
 # Set the base URL for Urban Dictionary
 base_url <- "https://www.urbandictionary.com/?page="
@@ -143,8 +99,54 @@ all_trending_words <- scrape_multiple_pages(100)
 # Display the first 10 words
 head(all_trending_words, 10)
 ```
+## Data Preprocessing
+### Removing Symbols
+```{r}
+tb <- tb %>%
+  mutate(
+    text = str_replace_all(text, "http[s]?://\\S+", ""),   # Remove URLs
+    text = str_replace_all(text, "@\\w+", ""),             # Remove mentions
+    text = str_replace_all(text, "#\\w+", ""),             # Remove hashtags
+    text = str_replace_all(text, "[^\x01-\x7F]", ""),      # Remove all non-ASCII characters (including emojis)
+    text = str_replace_all(text, "[[:punct:]]", "")        # Remove punctuation
+  )
 
+```
+### Identifying Language
+```{r}
+# Detect language and add to a column
+tb <- tb %>%
+  mutate(language = cld2::detect_language(text)) %>%
+  filter(language == "en")
 
+head(tb)
+```
+### Removing Stop Words
+### Tokenization
 
+## Text Representation
+### Bag-of-Words
+### Word Embeddings (Word2Vec)
+### TF-IDF
+### Latent Dirichlet Allocation
+### Pre-trained Embeddings (BERT)
+
+## NLP Techniques
+Definition: An emerging slang word is a word commonly arising from niche sub-cultures that is eventually adopted by the general public and is not listed in the English dictionary (Ex. rizz, skibidi, gyat).
+
+### Term Frequency
+Question: What are the most common emerging slang words used in Bluesky?
+### Similarity Search
+Question: What words are synonymous to an emerging slang word?
+### Clustering
+Question: What words are commonly used in conjuction to an emerging slang word?
+### Topic Modeling
+Question: On what context or topic is an emerging slang word used for?
+### Relationship Extraction
+Question: What words will most likely appear in a sequence to an emerging slang word? (bi-grams)
+
+# Evaluation
+
+# Results
 
 
