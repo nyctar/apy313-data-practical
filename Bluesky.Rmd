@@ -8,9 +8,11 @@ output:
     toc_depth: 3
     number_sections: true
 ---
+
 # Introduction
-![project workflow](R.png)
-# Methods
+
+![project workflow](R.png) \# Methods
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
@@ -34,8 +36,11 @@ library(ggraph)
 library(quanteda)
 library(rvest)
 ```
+
 ## Import Data
+
 ### Bluesky Dataset
+
 ```{r}
 # Import the Python datasets library
 datasets <- import("datasets")
@@ -49,6 +54,7 @@ df <- py_to_r(data$train$to_pandas())
 # Check a few rows
 head(df)
 ```
+
 ```{r}
 # Turn the DataFrame into a tibble for tidyverse
 tb <- as_tibble(df)
@@ -56,7 +62,9 @@ tb <- as_tibble(df)
 # View the first few rows
 tail(tb)
 ```
+
 ### Urban Dictionary Lexicon
+
 ```{r}
 # Set the base URL for Urban Dictionary
 base_url <- "https://www.urbandictionary.com/?page="
@@ -92,6 +100,7 @@ scrape_multiple_pages <- function(num_pages) {
   return(all_words)
 }
 ```
+
 ```{r}
 # Scrape the first 10 pages
 all_trending_words <- scrape_multiple_pages(100)
@@ -99,8 +108,11 @@ all_trending_words <- scrape_multiple_pages(100)
 # Display the first 10 words
 head(all_trending_words, 10)
 ```
+
 ## Data Preprocessing
+
 ### Removing Symbols
+
 ```{r}
 tb <- tb %>%
   mutate(
@@ -112,7 +124,9 @@ tb <- tb %>%
   )
 
 ```
+
 ### Identifying Language
+
 ```{r}
 # Detect language and add to a column
 tb <- tb %>%
@@ -121,32 +135,47 @@ tb <- tb %>%
 
 head(tb)
 ```
+
 ### Removing Stop Words
+
 ### Tokenization
 
 ## Text Representation
+
 ### Bag-of-Words
+
 ### Word Embeddings (Word2Vec)
+
 ### TF-IDF
+
 ### Latent Dirichlet Allocation
+
 ### Pre-trained Embeddings (BERT)
 
 ## NLP Techniques
+
 Definition: An emerging slang word is a word commonly arising from niche sub-cultures that is eventually adopted by the general public and is not listed in the English dictionary (Ex. rizz, skibidi, gyat).
 
 ### Term Frequency
+
 Question: What are the most common emerging slang words used in Bluesky?
+
 ### Similarity Search
+
 Question: What words are synonymous to an emerging slang word?
+
 ### Clustering
+
 Question: What words are commonly used in conjuction to an emerging slang word?
+
 ### Topic Modeling
+
 Question: On what context or topic is an emerging slang word used for?
+
 ### Relationship Extraction
+
 Question: What words will most likely appear in a sequence to an emerging slang word? (bi-grams)
 
 # Evaluation
 
 # Results
-
-
