@@ -1,0 +1,555 @@
+---
+title: "Investigating the Sentiment Change of Bluesky Posts Based on Time"
+author: "Yestin Arvin Gochuico"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+---
+
+# Abstract
+
+I explored the variation in sentiment of Bluesky social media posts based on time, specifically, the time of day (Morning, Afternoon, Evening, Night) and weekday (Monday to Sunday).
+
+VADER sentiment scores were computed for each posts. Due to strong imbalance in post distribution, I applied stratified downsampling to the dataset. Using non-parametric statistical tests (Kruskal-Wallis and Wilcoxon), the results revealed significant differences in sentiment in the time of day variable.
+
+Further analysis with Co-occurence networks and BART based labeling showed that social media post topics get more complex and diversified as the day progresses.
+
+# Initial Steps
+
+## Import Libraries
+
+I loaded a variety of libraries essential for text processing and visualization.
+
+```{r, warning=FALSE, message=FALSE, error=FALSE}
+library(tidyverse)
+library(reticulate)
+library(cld2)
+library(tidytext)
+library(wordcloud)
+library(word2vec)
+library(text2vec)
+library(Rtsne)
+library(plotly)
+library(reshape2)
+library(topicmodels)
+library(igraph)
+library(ggraph)
+library(quanteda)
+library(rvest)
+library(hunspell)
+library(textTinyR)
+library(httr)
+library(tm)
+library(reshape2)
+library(widyr)
+library(FactoMineR)
+library(factoextra)
+library(patchwork)
+```
+
+# Import Python Libraries
+
+```{r}
+# Python environment for reticulate
+# The python version in my environment is 3.11
+# To install specific version:
+# brew install python@3.11
+
+# INPUT: Put the name that you want for your env
+env_name <- "bluesky_env"
+
+if (!virtualenv_exists(env_name)) {
+  virtualenv_create(env_name)
+  virtualenv_install(env_name, packages = c(
+    "pandas", "datasets", "vaderSentiment", "transformers", "torch", "scikit-learn", "hf_xet" # Installs all required packages
+  ))
+}
+
+use_virtualenv(env_name, required = TRUE)
+```
+
+## Load Datasets
+
+The dataset, sourced from the Alpindale Bluesky post repository, initially included 2 million posts. I applied various preprocessing steps including removing unneccessary symbols and language detection. Posts are then categorized into time-of-day bins (Morning, Afternoon, Evening, Night) and weekdays (Monday~Sunday). Sentiment scores were calculated using the VADER lexicon. To address imbalances in post distribution by time and weekday, stratified downsampling was performed, resulting in two balanced datasets for analysis.
+
+```{r}
+# Load preprocessed datasets
+time_balanced <- read_csv("time_balanced.csv")
+weekday_balanced <- read_csv("weekday_balanced.csv")
+```
+
+## Removing Stop Words
+
+This list will be used during the tokenization process for the data visualization.
+
+```{r}
+# Load stop words and convert to lowercase
+data("stop_words")
+stop_words <- tolower(stop_words$word)
+
+# Remove apostrophes from stop words and create a new list with both forms
+expanded_stop_words <- stop_words %>%
+  str_replace_all("'", "") %>%  # Remove apostrophes
+  unique()  # Get unique words
+
+# Add the original stop words with apostrophes back to the list
+expanded_stop_words <- unique(c(expanded_stop_words, stop_words))
+
+# View the expanded stop words list
+head(expanded_stop_words)
+```
+
+# Hypothesis Testing - Time of Day
+
+I will be testing whether there is a significant difference in sentiment across different times of the day (morning, afternoon, evening, and night).
+
+## Hypothesis
+
+Predictor Variable (IV - Cat): Time of Day (Morning, Afternoon, Night, Evening) Response Variable (DV - Num): VADER Sentiment Score of Bluesky Posts (-1 to 1)
+
+Null Hypothesis (H₀): There is NO significant difference in sentiment across different times of the day (morning, afternoon, evening, and night). Alternative Hypothesis (H₁): There is a significant difference in sentiment across different times of the day.
+
+## Test Statistic
+
+```{r}
+# Violin plot
+ggplot(time_balanced, aes(x = time_of_day, y = sentiment, fill = time_of_day)) +
+  geom_violin(trim = FALSE, scale = "width") +
+  stat_summary(fun = "median", geom = "point", shape = 21, size = 2, fill = "white") +
+  labs(title = "Sentiment Distribution by Time of Day (Balanced)",
+       x = "Time of Day",
+       y = "Sentiment Score") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+```{r}
+time_balanced %>%
+  group_by(time_of_day) %>%
+  summarise(
+    median_sentiment = median(sentiment),
+    mean_sentiment = mean(sentiment),
+    n = n()
+  )
+```
+
+```{r}
+# Kolmogorov-Smirnov test for checking normality with large sample sizes
+
+# Null Hypothesis (H₀): The data follows a normal distribution
+# Alternative Hypothesis (H₁):The data does NOT follow a normal distribution
+
+time_balanced %>%
+  group_by(time_of_day) %>%
+  summarise(ks_test = ks.test(sentiment, "pnorm", mean(sentiment), sd(sentiment))$p.value)
+```
+
+Before selecting a test statistic, the data was explored further. From looking at the distribution, it was apparent that the data is not normal.
+
+The Kolmogorov-Smirnov test is a statistical test used to examine if variables are normally distributed.
+
+The Kolmogorov-Smirnov test showed that the for each group (Afternoon, Evening, Morning, Night), the p-value is \<0.001, which means that we REJECT the null hypothesis for all groups (Null Hypothesis (H₀): The data follows a normal distribution). Therefore, the data is does not follow a normal distribution.
+
+Therefore, we will use an alternative to ANOVA. Kruskal-Wallis test, which is a non-parametric test suitable for comparing more than two groups based on their rankings, tests for significant differences in sentiment between time-of-day categories (alpha = 0.05 as the standard).
+
+```{r}
+# Kruskal-Wallis Test
+kruskal.test(sentiment ~ time_of_day, data = time_balanced)
+```
+
+Based on our test results (Kruskal-Wallis test value (3) = 85.491, p-value = 0.002), we reject the null hypothesis and conclude that there is a significant difference in sentiment across the different times of the day.
+
+## Post Hoc Test
+
+The Wilcoxon signed-rank test is a common test used in replacement to a paired t-test when analyzing paired or related samples for a data that does NOT have a normal distribution.
+
+```{r}
+# Perform post hoc test
+time_pairwise <- pairwise.wilcox.test(time_balanced$sentiment, time_balanced$time_of_day, p.adjust.method = "BH")
+
+time_pairwise
+```
+
+## Results
+
+There are significant differences in sentiment between Morning and Evening, Morning and Night, and Afternoon and Evening (alpha = 0.05)
+
+There is no significant difference between the rest of the pairs.
+
+# Hypothesis Testing - Weekday
+
+I will be testing whether there is a significant difference in sentiment across weekdays (Monday-Sunday)
+
+Predictor Variable (IV): Weekday (Monday-Sunday) Response Variable (DV): Sentiment value of Bluesky posts
+
+## Hypothesis
+
+Predictor Variable (IV - Cat): Weekday (Monday-Sunday) Response Variable (DV - Num): VADER Sentiment Score of Bluesky Posts (-1 to 1)
+
+Null Hypothesis (H₀): There is NO significant difference in sentiment across different weekday. Alternative Hypothesis (H₁): There is a significant difference in sentiment across different weekday.
+
+## Test Statistic
+
+```{r}
+ggplot(weekday_balanced, aes(x = weekday, y = sentiment, fill = weekday)) +
+  geom_violin(trim = FALSE, scale = "width") +
+  stat_summary(fun = "median", geom = "point", shape = 21, size = 2, fill = "white") +
+  labs(title = "Sentiment Distribution by Weekday (Balanced)",
+       x = "Weekday",
+       y = "Sentiment Score") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+```{r}
+# Kolmogorov-Smirnov test for checking normality with large sample sizes
+
+# Null Hypothesis (H₀): The data follows a normal distribution
+# Alternative Hypothesis (H₁):The data does NOT follow a normal distribution
+
+weekday_balanced %>%
+  group_by(weekday) %>%
+  summarise(ks_test = ks.test(sentiment, "pnorm", mean(sentiment), sd(sentiment))$p.value)
+```
+
+Before selecting a test statistic, the data was explored further. From looking at the distribution, it was apparent that the data is not normal.
+
+The Kolmogorov-Smirnov test is a statistical test used to examine if variables are normally distributed.
+
+The Kolmogorov-Smirnov test showed that the for each group (Monday-Sunday), the p-value is <0.001, which means that we REJECT the null hypothesis for all groups (Null Hypothesis (H₀): The data follows a normal distribution). Therefore, the data is does not follow a normal distribution.
+
+Therefore, we will use an alternative to ANOVA. Kruskal-Wallis test, which is a non-parametric test suitable for comparing more than two groups based on their rankings, tests for significant differences in sentiment between time-of-day categories (alpha = 0.05 as the standard).
+
+```{r}
+# Kruskal-Wallis Test by weekday
+kruskal.test(sentiment ~ factor(weekday), data = weekday_balanced)
+```
+
+Based on our test results (Kruskal-Wallis test value (3) = 85.491, p-value = 0.165), we accept the null hypothesis and conclude that there is NO significant difference in sentiment across the different times of the day.
+
+## Post Hoc Test
+
+Since the Kruskal-Wallis test did not see any significant results, there is no need to do a post hoc test.
+
+# Visualization
+
+```{r}
+# Add row ID
+time_balanced <- time_balanced %>%
+  mutate(row_id = row_number())
+
+# Filter morning and remove stop words
+morning_words <- time_balanced %>%
+  filter(time_of_day == "Morning") %>%
+  select(row_id, text) %>%
+  unnest_tokens(word, text) %>%
+  filter(!word %in% expanded_stop_words,
+         hunspell_check(word, dict = "en_US")) #stop word filter
+
+# Calculate co-occurrence counts (within same post)
+morning_pairs <- morning_words %>%
+  pairwise_count(word, row_id, sort = TRUE, upper = FALSE)
+
+# Filter for strong connections only
+morning_pairs_filtered <- morning_pairs %>%
+  filter(n >= 3)  # Only keep strong links
+
+# Build graph
+graph <- morning_pairs_filtered %>%
+  graph_from_data_frame()
+
+# Plot with ggraph
+ggraph(graph, layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n), show.legend = FALSE) +
+  geom_node_point(color = "skyblue", size = 5) +
+  geom_node_text(aes(label = name), repel = TRUE, size = 4) +
+  labs(title = "Morning Word Co-Occurrence Network") +
+  theme_void()
+```
+
+```{r}
+# Filter afternoon and remove stop words
+afternoon_words <- time_balanced %>%
+  filter(time_of_day == "Afternoon") %>%
+  select(row_id, text) %>%
+  unnest_tokens(word, text) %>%
+  filter(!word %in% expanded_stop_words,
+         hunspell_check(word, dict = "en_US")) #stop word filter
+
+# Calculate co-occurrence counts (within same post)
+afternoon_pairs <- afternoon_words %>%
+  pairwise_count(word, row_id, sort = TRUE, upper = FALSE)
+
+# Filter for strong connections only
+afternoon_pairs_filtered <- afternoon_pairs %>%
+  filter(n >= 3)  # Only keep strong links
+
+# Build graph
+graph <- afternoon_pairs_filtered %>%
+  graph_from_data_frame()
+
+# Plot with ggraph
+ggraph(graph, layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n), show.legend = FALSE) +
+  geom_node_point(color = "skyblue", size = 5) +
+  geom_node_text(aes(label = name), repel = TRUE, size = 4) +
+  labs(title = "Afternoon Word Co-Occurrence Network") +
+  theme_void()
+```
+
+```{r}
+# Filter evening and remove stop words
+evening_words <- time_balanced %>%
+  filter(time_of_day == "Evening") %>%
+  select(row_id, text) %>%
+  unnest_tokens(word, text) %>%
+  filter(!word %in% expanded_stop_words,
+         hunspell_check(word, dict = "en_US")) #stop word filter
+
+# Calculate co-occurrence counts (within same post)
+evening_pairs <- evening_words %>%
+  pairwise_count(word, row_id, sort = TRUE, upper = FALSE)
+
+# Filter for strong connections only
+evening_pairs_filtered <- evening_pairs %>%
+  filter(n >= 3)  # Only keep strong links
+
+# Build graph
+graph <- evening_pairs_filtered %>%
+  graph_from_data_frame()
+
+# Plot with ggraph
+ggraph(graph, layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n), show.legend = FALSE) +
+  geom_node_point(color = "skyblue", size = 5) +
+  geom_node_text(aes(label = name), repel = TRUE, size = 4) +
+  labs(title = "Evening Word Co-Occurrence Network") +
+  theme_void()
+```
+
+```{r}
+# Filter night and remove stop words
+night_words <- time_balanced %>%
+  filter(time_of_day == "Night") %>%
+  select(row_id, text) %>%
+  unnest_tokens(word, text) %>%
+  filter(!word %in% expanded_stop_words,
+         hunspell_check(word, dict = "en_US")) #stop word filter
+
+# Calculate co-occurrence counts (within same post)
+night_pairs <- night_words %>%
+  pairwise_count(word, row_id, sort = TRUE, upper = FALSE)
+
+# Filter for strong connections only
+night_pairs_filtered <- night_pairs %>%
+  filter(n >= 3)  # Only keep strong links
+
+# Build graph
+graph <- night_pairs_filtered %>%
+  graph_from_data_frame()
+
+# Plot with ggraph
+ggraph(graph, layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n), show.legend = FALSE) +
+  geom_node_point(color = "skyblue", size = 5) +
+  geom_node_text(aes(label = name), repel = TRUE, size = 4) +
+  labs(title = "Night Word Co-Occurrence Network") +
+  theme_void()
+```
+
+```{r}
+# Function to compute network
+network_stats_by_time <- function(data, time_label) {
+  # Filter for one time_of_day group
+  word_pairs <- data %>%
+    filter(time_of_day == time_label) %>%
+    unnest_tokens(word, text) %>%
+    filter(!word %in% expanded_stop_words,
+           hunspell_check(word, dict = "en_US")) %>%
+    pairwise_count(word, row_id, sort = TRUE, upper = FALSE) %>%
+    filter(n >= 3)
+
+  # Build graph
+  g <- graph_from_data_frame(word_pairs, directed = FALSE)
+
+  # Compute metrics
+  data.frame(
+    time_of_day = time_label,
+    nodes = vcount(g),
+    edges = ecount(g),
+    density = edge_density(g),
+    components = components(g)$no,
+    modularity = modularity(cluster_louvain(g))
+  )
+}
+
+# Apply to all 4 time bins
+network_summary <- bind_rows(
+  network_stats_by_time(time_balanced, "Morning"),
+  network_stats_by_time(time_balanced, "Afternoon"),
+  network_stats_by_time(time_balanced, "Evening"),
+  network_stats_by_time(time_balanced, "Night")
+)
+
+network_summary
+```
+
+```{r}
+# Bar chart of modularity
+ggplot(network_summary, aes(x = factor(time_of_day, levels = c("Morning", "Afternoon", "Evening", "Night")), 
+                             y = modularity, fill = time_of_day)) +
+  geom_col(show.legend = FALSE) +
+  labs(title = "Topic Modularity by Time of Day",
+       x = "Time of Day",
+       y = "Modularity Score") +
+  theme_minimal()
+```
+
+Modularity: how well the network is divided into distinct groups.
+
+There is low modularity in the morning/afternoon. There is a high modularity in the evening/night.
+
+Social media post topics get more complex and partitioned as the day progresses.
+
+```{r}
+# Build co-occurrence network per time bin
+build_cooc_graph <- function(df, time_label) {
+  word_pairs <- df %>%
+    filter(time_of_day == time_label) %>%
+    unnest_tokens(word, text) %>%
+    filter(!word %in% expanded_stop_words,
+           hunspell_check(word, dict = "en_US")) %>%
+    pairwise_count(word, row_id, sort = TRUE, upper = FALSE) %>%
+    filter(n >= 3)
+  
+  g <- graph_from_data_frame(word_pairs, directed = FALSE)
+  g <- simplify(g, remove.multiple = TRUE, remove.loops = TRUE)
+  
+  # Add Louvain communities
+  V(g)$community <- cluster_louvain(g)$membership
+  V(g)$name <- V(g)$name
+  g
+}
+
+# Build graphs
+g_morning   <- build_cooc_graph(time_balanced, "Morning")
+g_afternoon <- build_cooc_graph(time_balanced, "Afternoon")
+g_evening   <- build_cooc_graph(time_balanced, "Evening")
+g_night     <- build_cooc_graph(time_balanced, "Night")
+
+# Plot function
+plot_network <- function(graph, title) {
+  ggraph(graph, layout = "fr") +
+    geom_edge_link(alpha = 0.2) +
+    geom_node_point(aes(color = as.factor(community)), size = 3) +
+    geom_node_text(aes(label = name), repel = TRUE, size = 3) +
+    labs(title = title) +
+    theme_void() +
+    theme(legend.position = "none")
+}
+
+# Generate plots
+p1 <- plot_network(g_morning, "Morning")
+p2 <- plot_network(g_afternoon, "Afternoon")
+p3 <- plot_network(g_evening, "Evening")
+p4 <- plot_network(g_night, "Night")
+
+# Combine plots into a 2x2 grid
+(p1 | p2) / (p3 | p4)
+```
+
+Co-Occurrence: How often terms appear together in a post for each group.
+
+Community Detection: What terms are clustered/partitioned to each other by topic.
+
+We see that there are less clusters early in the day and more clusters late in the night.
+
+```{r}
+# Labeling by BART with candidate labels
+transformers <- import("transformers")
+pipeline <- transformers$pipeline
+classifier <- pipeline("zero-shot-classification", model = "facebook/bart-large-mnli")
+
+label_cluster_bart <- function(words, cluster_id) {
+  labels <- c(
+    "politics", "economy", "health", "science", "technology",
+    "education", "environment", "law", "conflict", "social issues",
+    "sports", "religion", "culture", "entertainment", "weather"
+  )
+
+  text_input <- paste(words, collapse = ", ")
+
+  result <- classifier(text_input, labels)
+
+  data.frame(
+    cluster = cluster_id,
+    label = result$labels[[1]],  # most likely label
+    score = result$scores[[1]]   # confidence
+  )
+}
+communities <- sort(unique(V(graph)$community))
+
+cluster_labels <- purrr::map_dfr(communities, function(c_id) {
+  words <- V(graph)[community == c_id]$name[1:12]
+  label_cluster_bart(words, c_id)
+})
+```
+
+```{r}
+get_cluster_labels_by_time <- function(df, time_label) {
+  word_pairs <- df %>%
+    filter(time_of_day == time_label) %>%
+    mutate(row_id = row_number()) %>%
+    unnest_tokens(word, text) %>%
+    filter(!word %in% expanded_stop_words,
+           hunspell_check(word, dict = "en_US")) %>%
+    pairwise_count(word, row_id, sort = TRUE, upper = FALSE) %>%
+    filter(n >= 3)
+
+  g <- graph_from_data_frame(word_pairs, directed = FALSE)
+  g <- simplify(g, remove.multiple = TRUE, remove.loops = TRUE)
+  V(g)$community <- cluster_louvain(g)$membership
+
+  communities <- sort(unique(V(g)$community))
+
+  cluster_labels <- purrr::map_dfr(communities, function(c_id) {
+    words <- V(g)[community == c_id]$name[1:12]
+    label_cluster_bart(words, c_id)
+  })
+
+  cluster_labels$time_of_day <- time_label
+  cluster_labels
+}
+```
+
+```{r}
+all_labels <- bind_rows(
+  get_cluster_labels_by_time(time_balanced, "Morning"),
+  get_cluster_labels_by_time(time_balanced, "Afternoon"),
+  get_cluster_labels_by_time(time_balanced, "Evening"),
+  get_cluster_labels_by_time(time_balanced, "Night")
+)
+```
+
+```{r}
+all_labels %>%
+  mutate(time_of_day = factor(time_of_day, levels = c("Morning", "Afternoon", "Evening", "Night"))) %>%
+  count(time_of_day, label) %>%
+  group_by(time_of_day) %>%
+  mutate(prop = n / sum(n)) %>%
+  ggplot(aes(x = time_of_day, y = prop, fill = label)) +
+  geom_col(position = "fill") +
+  labs(
+    title = "Proportion of Topics by Time of Day",
+    y = "Proportion",
+    x = "Time of Day"
+  ) +
+  theme_minimal()
+```
+
+Using an BART (a transformer model), every partition for each group was categorized based on candidate labels.
+
+We can see that topics are more fused for morning and afternoon while it is more diversified for evening and night.
